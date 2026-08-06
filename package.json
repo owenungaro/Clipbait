@@ -1,0 +1,69 @@
+{
+  "name": "clipbait",
+  "version": "1.0.0",
+  "description": "Instant-replay screen clipping for Windows",
+  "main": "./out/main/index.js",
+  "author": "owen",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "icons": "node scripts/make-icons.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "dist": "npm run icons && electron-vite build && electron-builder --win --x64",
+    "pack": "electron-vite build && electron-builder --win --dir --x64",
+    "deploy": "npm run pack && bash scripts/deploy.sh --launch"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^43.3.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "typescript": "^7.0.2",
+    "vite": "^7.3.6"
+  },
+  "build": {
+    "appId": "com.clipbait.app",
+    "productName": "Clipbait",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "electronLanguages": ["en-US"],
+    "files": [
+      "out/**/*",
+      "!**/*.map"
+    ],
+    "extraResources": [
+      {
+        "from": "resources",
+        "to": "."
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "Clipbait-${version}-setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Clipbait"
+    }
+  }
+}

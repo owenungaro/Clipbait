@@ -1,0 +1,123 @@
+@font-face {
+  font-family: 'Archivo';
+  src: url('../assets/fonts/archivo-var.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-display: block;
+}
+/* Digits, hotkeys and URLs only — anywhere characters need to line up. */
+@font-face {
+  font-family: 'Plex Mono';
+  src: url('../assets/fonts/plexmono-400.woff2') format('woff2');
+  font-weight: 400;
+  font-display: block;
+}
+
+:root {
+  /* Neutrals carry a slight blue bias toward the accent, so the greys read as
+     chosen rather than inherited. */
+  --bg: #0e0f13;
+  --surface: #14151b;
+  --raised: #1b1d26;
+  --raised-2: #212430;
+  --edge: #23252f;
+  --edge-lit: #2f3242;
+
+  --text: #eceef4;
+  --text-2: #a7abbb;
+  --text-3: #767b8e;
+
+  --accent: #7d8cf8;
+  --accent-hi: #93a0ff;
+  --accent-soft: rgb(125 140 248 / 0.14);
+  --on-accent: #0c0d12;
+
+  /* Semantic, and deliberately separate from the accent. */
+  --live: #f2647c;
+  --warn: #f0b429;
+  --link: #63c7d6;
+
+  --r: 7px;
+  --r-lg: 10px;
+
+  --font-ui: 'Archivo', 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'Plex Mono', Consolas, ui-monospace, monospace;
+
+  --ease: cubic-bezier(0.32, 0.72, 0.24, 1);
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px rgb(0 0 0 / 0.3);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+  cursor: default;
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--edge-lit);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3d4152;
+  background-clip: content-box;
+}
+
+/* Small uppercase label used for field groups and captions. */
+.eyebrow {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
