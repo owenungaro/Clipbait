@@ -10,6 +10,8 @@ Grab the installer from [Releases](https://github.com/owenungaro/Clipbait/releas
 
 That's the whole setup. First launch pulls down FFmpeg by itself, so there's nothing else to install.
 
+Windows will probably throw up a SmartScreen warning because I haven't paid for a code signing cert. Click "More info" then "Run anyway".
+
 ## Using it
 
 1. Hit **Arm**
