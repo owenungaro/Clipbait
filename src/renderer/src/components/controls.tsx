@@ -222,9 +222,10 @@ export function HotkeyInput({
         latest.current(accel)
         setRecording(false)
       } else {
-        // Never fail silently — an unusable combination has to say so, or the
-        // control just looks broken.
-        setRejected('Use a function key, or hold Ctrl, Alt or Shift')
+        // Never fail silently — an unusable key has to say so, or the control
+        // just looks broken. Most keys map; this is for the odd one that cannot
+        // (media keys, some OEM keys) and for Escape, which cancels instead.
+        setRejected("That key can't be used — try another")
       }
     }
 

@@ -30,7 +30,7 @@ The clip lands in `Videos\Clipbait` and a small card slides into the corner of y
 | `Ctrl+Shift+F9` | Arm or disarm the buffer |
 | `Ctrl+Shift+C`  | Open the window          |
 
-All rebindable under **Setup > Keys**. Function keys work on their own, anything else needs a modifier or it would swallow that key everywhere else on your system.
+All rebindable under **Setup > Keys**. You can bind any key, on its own or with modifiers — just note that a key bound by itself is captured system-wide while Clipbait runs, so it won't reach other programs.
 
 ## Settings
 
