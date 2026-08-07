@@ -1,6 +1,6 @@
 {
   "name": "clipbait",
-  "version": "1.0.0",
+  "version": "1.1.1",
   "description": "Instant-replay screen clipping for Windows",
   "main": "./out/main/index.js",
   "author": "owen",
@@ -13,10 +13,15 @@
     "icons": "node scripts/make-icons.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "dist": "npm run icons && electron-vite build && electron-builder --win --x64",
+    "release": "npm run icons && electron-vite build && electron-builder --win --x64 --publish always",
     "pack": "electron-vite build && electron-builder --win --dir --x64",
     "deploy": "npm run pack && bash scripts/deploy.sh --launch"
   },
-  "dependencies": {},
+  "dependencies": {
+    "electron-updater": "^6.8.9",
+    "fflate": "^0.8.3",
+    "koffi": "^2.16.3"
+  },
   "devDependencies": {
     "@types/node": "^26.1.2",
     "@types/react": "^19.2.18",
@@ -37,10 +42,22 @@
       "output": "release",
       "buildResources": "build"
     },
-    "electronLanguages": ["en-US"],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "owenungaro",
+        "repo": "Clipbait"
+      }
+    ],
+    "electronLanguages": [
+      "en-US"
+    ],
     "files": [
       "out/**/*",
       "!**/*.map"
+    ],
+    "asarUnpack": [
+      "**/node_modules/koffi/**"
     ],
     "extraResources": [
       {
@@ -52,7 +69,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "build/icon.ico",

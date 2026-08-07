@@ -12,6 +12,8 @@ That's the whole setup. First launch pulls down FFmpeg by itself, so there's not
 
 Windows will probably throw up a SmartScreen warning because I haven't paid for a code signing cert. Click "More info" then "Run anyway".
 
+After that Clipbait keeps itself up to date. It checks the GitHub releases on launch, quietly downloads a newer version in the background, and installs it the next time you quit. You can also force a check under **Setup > General > Updates**, and when one is ready you'll get a "Restart to update" prompt in the tray.
+
 ## Using it
 
 1. Hit **Arm**
@@ -63,6 +65,18 @@ npm run dist    # build the installer into release/
 ```
 
 Needs Node 20 or newer.
+
+## Cutting a release
+
+Auto-update reads a `latest.yml` off the GitHub release, so releases have to go up through electron-builder rather than by hand-dragging the exe.
+
+1. Bump `version` in `package.json` (the updater only fires when the release is newer than what's installed).
+2. Export a GitHub token with `repo` scope: `export GH_TOKEN=…`
+3. `npm run release`
+
+That builds the installer and uploads the `.exe`, its `.blockmap` and `latest.yml` to a draft release on GitHub. Publish the draft and every existing install picks it up on next launch. (The `.blockmap` and `latest.yml` are what make updates work — if you ever upload manually, include them.)
+
+The one build that can't auto-update is the one someone installed *before* this feature existed; they'll need to grab the next version from Releases by hand, and it's automatic from there.
 
 ## License
 
