@@ -207,6 +207,27 @@ export interface FfmpegStatus {
   message: string | null;
 }
 
+/* ---------------------------------------------------------------- updates */
+
+export type UpdateState =
+  | "idle"
+  | "checking"
+  | "available"
+  | "downloading"
+  | "downloaded"
+  | "not-available"
+  | "error";
+
+export interface UpdateStatus {
+  state: UpdateState;
+  /** Version of the pending update once known, e.g. "1.1.0". */
+  version: string | null;
+  /** 0..1 while the installer downloads. */
+  progress: number;
+  /** Populated when state is 'error'. */
+  message: string | null;
+}
+
 /* ---------------------------------------------------------------- ipc names */
 
 /** Main -> renderer pushes. */
@@ -222,6 +243,7 @@ export const CHANNEL = {
   audioStart: "audio:start",
   audioStop: "audio:stop",
   toast: "ui:toast",
+  updateStatus: "update:status",
 } as const;
 
 export interface AudioStartRequest {

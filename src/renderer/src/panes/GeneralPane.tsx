@@ -1,9 +1,29 @@
 import { useEffect, useState } from 'react'
+import type { UpdateStatus } from '@shared/types'
 import { useApp } from '../lib/store'
 import { Field, Section, Switch } from '../components/controls'
 
+function updateLabel(update: UpdateStatus | null): string {
+  switch (update?.state) {
+    case 'checking':
+      return 'Checking for updates…'
+    case 'available':
+      return `Update${update.version ? ` v${update.version}` : ''} found — downloading…`
+    case 'downloading':
+      return `Downloading${update.version ? ` v${update.version}` : ''}… ${Math.round(update.progress * 100)}%`
+    case 'downloaded':
+      return `Update${update.version ? ` v${update.version}` : ''} ready to install`
+    case 'not-available':
+      return "You're on the latest version"
+    case 'error':
+      return update.message ?? 'Update check failed'
+    default:
+      return ''
+  }
+}
+
 export function GeneralPane(): React.JSX.Element | null {
-  const { settings, ffmpeg, patch } = useApp()
+  const { settings, ffmpeg, update, patch } = useApp()
   const [version, setVersion] = useState('')
 
   useEffect(() => {
@@ -12,6 +32,8 @@ export function GeneralPane(): React.JSX.Element | null {
 
   if (!settings) return null
   const g = settings.general
+  const busy = update?.state === 'checking' || update?.state === 'downloading'
+  const statusLabel = updateLabel(update)
 
   return (
     <div className="pane">
@@ -47,6 +69,32 @@ export function GeneralPane(): React.JSX.Element | null {
             checked={g.closeToTray}
             onChange={(closeToTray) => patch({ general: { closeToTray, minimizeToTray: closeToTray } })}
           />
+        </Field>
+      </Section>
+
+      <Section title="Updates">
+        <Field
+          label="Keep Clipbait up to date"
+          help={statusLabel || 'Checks GitHub for the newest release and installs it.'}
+        >
+          {update?.state === 'downloaded' ? (
+            <button
+              type="button"
+              className="btn btn--sm"
+              onClick={() => void window.clipbait.installUpdate()}
+            >
+              Restart &amp; install
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn btn--sm"
+              disabled={busy}
+              onClick={() => void window.clipbait.checkForUpdates()}
+            >
+              {busy ? 'Checking…' : 'Check for updates'}
+            </button>
+          )}
         </Field>
       </Section>
 

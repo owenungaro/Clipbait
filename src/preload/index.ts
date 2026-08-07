@@ -9,7 +9,8 @@ import type {
   FfmpegStatus,
   Settings,
   SettingsPatch,
-  Toast
+  Toast,
+  UpdateStatus
 } from '@shared/types'
 import { CHANNEL } from '@shared/types'
 
@@ -98,7 +99,14 @@ const api = {
     ipcRenderer.invoke('hotkeys:conflicts'),
   onToast: (cb: (t: Toast) => void): Off => subscribe(CHANNEL.toast, cb),
   appVersion: (): Promise<string> => ipcRenderer.invoke('app:version'),
-  quit: (): void => ipcRenderer.send('app:quit')
+  quit: (): void => ipcRenderer.send('app:quit'),
+
+  /* updates */
+  getUpdateStatus: (): Promise<UpdateStatus> => ipcRenderer.invoke('update:get'),
+  checkForUpdates: (): Promise<void> => ipcRenderer.invoke('update:check'),
+  installUpdate: (): Promise<void> => ipcRenderer.invoke('update:install'),
+  onUpdateStatus: (cb: (s: UpdateStatus) => void): Off =>
+    subscribe(CHANNEL.updateStatus, cb)
 }
 
 export type ClipbaitApi = typeof api

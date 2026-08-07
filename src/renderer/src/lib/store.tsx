@@ -15,7 +15,8 @@ import type {
   FfmpegStatus,
   Settings,
   SettingsPatch,
-  Toast
+  Toast,
+  UpdateStatus
 } from '@shared/types'
 
 interface AppState {
@@ -27,6 +28,7 @@ interface AppState {
   encoders: EncoderInfo[]
   toasts: Toast[]
   conflicts: Record<string, boolean>
+  update: UpdateStatus | null
   patch: (p: SettingsPatch) => void
   refreshClips: () => void
   dismissToast: (id: string) => void
@@ -43,6 +45,7 @@ export function AppProvider({ children }: { children: ReactNode }): React.JSX.El
   const [encoders, setEncoders] = useState<EncoderInfo[]>([])
   const [toasts, setToasts] = useState<Toast[]>([])
   const [conflicts, setConflicts] = useState<Record<string, boolean>>({})
+  const [update, setUpdate] = useState<UpdateStatus | null>(null)
 
   const refreshClips = useCallback(() => {
     void window.clipbait.listClips().then(setClips)
@@ -56,6 +59,7 @@ export function AppProvider({ children }: { children: ReactNode }): React.JSX.El
     void api.listDisplays().then(setDisplays)
     void api.listEncoders().then(setEncoders)
     void api.hotkeyConflicts().then(setConflicts)
+    void api.getUpdateStatus().then(setUpdate)
     refreshClips()
 
     const offs = [
@@ -77,7 +81,8 @@ export function AppProvider({ children }: { children: ReactNode }): React.JSX.El
         setTimeout(() => {
           setToasts((prev) => prev.filter((t) => t.id !== toast.id))
         }, 5200)
-      })
+      }),
+      api.onUpdateStatus(setUpdate)
     ]
     return () => offs.forEach((off) => off())
   }, [refreshClips])
@@ -114,11 +119,12 @@ export function AppProvider({ children }: { children: ReactNode }): React.JSX.El
       encoders,
       toasts,
       conflicts,
+      update,
       patch,
       refreshClips,
       dismissToast
     }),
-    [settings, status, ffmpeg, clips, displays, encoders, toasts, conflicts, patch, refreshClips, dismissToast]
+    [settings, status, ffmpeg, clips, displays, encoders, toasts, conflicts, update, patch, refreshClips, dismissToast]
   )
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

@@ -43,6 +43,13 @@ import {
   revealOverlay,
   showMainWindow
 } from './windows'
+import {
+  checkForUpdates,
+  getUpdateStatus,
+  initUpdater,
+  onUpdateStatus,
+  quitAndInstall
+} from './updater'
 
 let recorder: Recorder
 let tray: Tray | null = null
@@ -249,6 +256,15 @@ async function shareClipById(id: string): Promise<void> {
   }
 }
 
+/* ---------------------------------------------------------------- updates */
+
+function installUpdate(): void {
+  // Flip the guard so the main window is allowed to close instead of folding
+  // back into the tray, then let electron-updater swap the install and relaunch.
+  quitting = true
+  quitAndInstall()
+}
+
 /* --------------------------------------------------------------- hotkeys */
 
 let hotkeyCaptureMode = false
@@ -282,9 +298,22 @@ function updateTray(status?: EngineStatus): void {
   const armed = state === 'armed'
   const { hotkeys } = getSettings()
 
+  const update = getUpdateStatus()
+  const updateReady: Electron.MenuItemConstructorOptions[] =
+    update.state === 'downloaded'
+      ? [
+          {
+            label: `Restart to update${update.version ? ` to v${update.version}` : ''}`,
+            click: () => installUpdate()
+          },
+          { type: 'separator' }
+        ]
+      : []
+
   tray.setToolTip(armed ? `Clipbait — armed (${hotkeys.saveClip} to clip)` : 'Clipbait — idle')
   tray.setContextMenu(
     Menu.buildFromTemplate([
+      ...updateReady,
       {
         label: armed ? 'Disarm buffer' : 'Arm buffer',
         click: () => void toggleEngine()
@@ -482,6 +511,10 @@ function registerIpc(): void {
     quitting = true
     app.quit()
   })
+
+  ipcMain.handle('update:get', () => getUpdateStatus())
+  ipcMain.handle('update:check', () => checkForUpdates(true))
+  ipcMain.handle('update:install', () => installUpdate())
 }
 
 /* ------------------------------------------------------------- lifecycle */
@@ -553,11 +586,23 @@ if (!singleInstance) {
 
     onFfmpegStatus((status) => broadcast(CHANNEL.ffmpegStatus, status))
 
+    onUpdateStatus((update) => {
+      broadcast(CHANNEL.updateStatus, update)
+      updateTray()
+      if (update.state === 'downloaded') {
+        toast(
+          'success',
+          `Update${update.version ? ` v${update.version}` : ''} ready — restart Clipbait to install.`
+        )
+      }
+    })
+
     registerIpc()
     registerHotkeys()
     createTray()
     createAudioWindow()
     createOverlayWindow()
+    initUpdater()
 
     const startHidden =
       process.argv.includes('--hidden') && getSettings().general.minimizeToTray
