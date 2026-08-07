@@ -18,7 +18,8 @@
     "deploy": "npm run pack && bash scripts/deploy.sh --launch"
   },
   "dependencies": {
-    "electron-updater": "^6.8.9"
+    "electron-updater": "^6.8.9",
+    "koffi": "^2.16.3"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",
@@ -53,6 +54,9 @@
     "files": [
       "out/**/*",
       "!**/*.map"
+    ],
+    "asarUnpack": [
+      "**/node_modules/koffi/**"
     ],
     "extraResources": [
       {
