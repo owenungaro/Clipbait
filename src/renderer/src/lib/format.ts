@@ -82,10 +82,9 @@ export function acceleratorFrom(event: KeyboardEvent): string | null {
   }
 
   if (!key) return null
-  // A bare letter or digit would swallow typing everywhere on the system.
-  const needsModifier = !/^F\d{1,2}$/.test(key)
-  if (needsModifier && parts.length === 0) return null
-
+  // Any key is allowed, with or without modifiers. A bare key registers as a
+  // system-wide shortcut and is captured everywhere while Clipbait runs, which
+  // the Keys pane warns about — the choice is left to the user.
   parts.push(key)
   return parts.join('+')
 }
