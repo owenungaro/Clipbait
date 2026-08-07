@@ -4,6 +4,7 @@ import { createWriteStream, existsSync } from 'node:fs'
 import { promises as fs } from 'node:fs'
 import https from 'node:https'
 import path from 'node:path'
+import { unzipSync } from 'fflate'
 import type { EncoderInfo, FfmpegStatus } from '@shared/types'
 
 const SOURCES = [
@@ -119,23 +120,36 @@ function download(url: string, dest: string, onProgress: (frac: number) => void)
   })
 }
 
-/** Windows ships bsdtar, which reads zip. Expand-Archive is the slower fallback. */
+/**
+ * Windows 10+ ships bsdtar, which reads zip and is the fast native path. The
+ * fallback used to shell out to PowerShell's Expand-Archive, but a hidden
+ * powershell.exe in the capture path is exactly what heuristic antivirus
+ * objects to, so extraction now falls back to an in-process unzip instead.
+ */
 async function unzip(zip: string, dest: string): Promise<void> {
   await fs.mkdir(dest, { recursive: true })
   const tar = spawnSync('tar', ['-xf', zip, '-C', dest], { encoding: 'utf8' })
   if (tar.status === 0) return
-  const ps = spawnSync(
-    'powershell.exe',
-    [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      `Expand-Archive -LiteralPath '${zip}' -DestinationPath '${dest}' -Force`
-    ],
-    { encoding: 'utf8' }
-  )
-  if (ps.status !== 0) {
-    throw new Error(`could not extract archive: ${tar.stderr || ps.stderr || 'unknown error'}`)
+
+  try {
+    const archive = new Uint8Array(await fs.readFile(zip))
+    // Only ffmpeg.exe is needed; skipping the rest avoids inflating the ~150 MB
+    // ffprobe.exe into memory for nothing.
+    const entries = unzipSync(archive, { filter: (f) => /(^|\/)ffmpeg\.exe$/i.test(f.name) })
+    const root = path.resolve(dest)
+    let wrote = false
+    for (const [name, bytes] of Object.entries(entries)) {
+      const out = path.resolve(root, name)
+      // Refuse any entry that would escape the destination (zip-slip).
+      if (out !== root && !out.startsWith(root + path.sep)) continue
+      await fs.mkdir(path.dirname(out), { recursive: true })
+      await fs.writeFile(out, bytes)
+      wrote = true
+    }
+    if (!wrote) throw new Error('archive did not contain ffmpeg.exe')
+  } catch (err) {
+    const detail = tar.stderr || (err instanceof Error ? err.message : String(err))
+    throw new Error(`could not extract archive: ${detail || 'unknown error'}`)
   }
 }
 
