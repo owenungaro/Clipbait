@@ -21,15 +21,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Sets up cl.exe/link.exe and the Windows SDK in PATH/INCLUDE/LIB
+      # directly, so the build does not depend on CMake locating a Visual
+      # Studio instance on its own.
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - name: Configure
-        run: cmake -S native/capture -B native/capture/build -G "Visual Studio 17 2022" -A x64
+        run: cmake -S native/capture -B native/capture/build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        run: cmake --build native/capture/build --config Release --verbose
+        run: cmake --build native/capture/build --verbose
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: clipbait-capture
-          path: native/capture/build/bin/Release/clipbait-capture.exe
+          path: native/capture/build/bin/clipbait-capture.exe
           if-no-files-found: error
