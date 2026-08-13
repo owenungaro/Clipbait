@@ -189,6 +189,15 @@ D3DContext CreateD3D() {
                          &ctx.context),
       "D3D11CreateDevice");
 
+  // Required, not optional: once this device is handed to Media Foundation
+  // via the DXGI device manager, the encoder's own driver threads touch it
+  // outside our call stack. Without multithread protection AMD's hardware
+  // H.264 MFT rejects the device manager outright (0xc00d6d77) even though
+  // it reports itself as D3D11-aware.
+  ComPtr<ID3D10Multithread> multithread;
+  CHECK_HR(ctx.device.As(&multithread), "QI ID3D10Multithread");
+  multithread->SetMultithreadProtected(TRUE);
+
   ComPtr<IDXGIDevice> dxgiDevice;
   CHECK_HR(ctx.device.As(&dxgiDevice), "QI IDXGIDevice");
 
