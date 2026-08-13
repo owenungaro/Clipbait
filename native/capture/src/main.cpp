@@ -335,7 +335,25 @@ Encoder CreateEncoder(const D3DContext& d3d, int width, int height, int fps, int
            "MFTEnumEx video encoders");
   if (count == 0) FailMsg("no hardware H.264 encoder available on this system");
 
-  HRESULT activateHr = activates[0]->ActivateObject(IID_PPV_ARGS(&enc.mft));
+  // "Hardware" MFTs are not all D3D11-aware — some are D3D9/DXVA2-only and
+  // reject an IMFDXGIDeviceManager outright. Prefer whichever candidate
+  // actually advertises D3D11 awareness so the pipeline stays GPU-resident;
+  // fall back to the top-ranked one if none do.
+  int chosen = -1;
+  for (UINT32 i = 0; i < count; i++) {
+    UINT32 d3d11Aware = 0;
+    activates[i]->GetUINT32(MF_SA_D3D11_AWARE, &d3d11Aware);
+    WCHAR name[128] = L"(unnamed)";
+    UINT32 nameLen = 0;
+    activates[i]->GetString(MFT_FRIENDLY_NAME_Attribute, name, ARRAYSIZE(name), &nameLen);
+    fprintf(stderr, "encoder candidate %u: %ls (d3d11_aware=%u)\n", i, name, d3d11Aware);
+    if (d3d11Aware && chosen < 0) chosen = static_cast<int>(i);
+  }
+  if (chosen < 0) chosen = 0;
+  fprintf(stderr, "using encoder candidate %d\n", chosen);
+  fflush(stderr);
+
+  HRESULT activateHr = activates[chosen]->ActivateObject(IID_PPV_ARGS(&enc.mft));
   for (UINT32 i = 0; i < count; i++) activates[i]->Release();
   CoTaskMemFree(activates);
   if (FAILED(activateHr)) Fail("ActivateObject on hardware H.264 encoder", activateHr);
