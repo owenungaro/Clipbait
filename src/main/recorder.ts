@@ -13,6 +13,7 @@ import { ffmpegPath, selectEncoder, supportsDdagrab } from './ffmpeg'
 import { resolveDisplay } from './displays'
 import { foregroundApp, startForegroundTracking, stopForegroundTracking } from './foreground'
 import { captureExePath, supportsNativeCapture } from './capture-native'
+import { H264ToFlv } from './flv-mux'
 
 /** Each ring slot is this long. Short enough to keep clip edges tight, long
  *  enough that we are not churning thousands of files an hour. */
@@ -318,23 +319,20 @@ export class Recorder extends EventEmitter {
 
     if (this.useNativeCapture) {
       // Already-encoded H.264 arrives over a named pipe from
-      // clipbait-capture.exe; ffmpeg's job for video is muxing only.
+      // clipbait-capture.exe, repackaged into a minimal FLV stream by
+      // H264ToFlv (see flv-mux.ts) before it reaches ffmpeg. ffmpeg's job
+      // for video here is muxing only.
       //
-      // Raw H.264 carries no real per-frame timestamps, so without
-      // use_wallclock_as_timestamps ffmpeg falls back to a constant nominal
-      // rate for every packet. Under real GPU contention the encoder's
-      // actual throughput drops well below that nominal rate, and stamping
-      // every arriving frame as if it came in on time made played-back
-      // video run in slow motion, ballooned segment/file sizes, and let
-      // audio's (correctly wall-clock-paced) timestamps race so far ahead
-      // of video's artificially slow one that max_interleave_delta below
-      // dropped it outright.
-      args.push(
-        '-f', 'h264',
-        '-use_wallclock_as_timestamps', '1',
-        '-thread_queue_size', '1024',
-        '-i', this.pipeName!
-      )
+      // Raw H.264 carries no real per-frame timestamps, so a demuxer reading
+      // it directly can only guess timing from when bytes happen to arrive
+      // — and that guess breaks the moment two frames land in the same
+      // read, which is routine once anything (an actual game) is competing
+      // for the GPU. Every symptom this caused (slow-motion playback,
+      // ballooned file sizes, audio dropped outright once its correctly
+      // wall-clock-paced timestamps outran video's guessed one) traced back
+      // to this. FLV tags carry an explicit timestamp per frame, which
+      // ffmpeg reads as authoritative instead of inferring.
+      args.push('-f', 'flv', '-thread_queue_size', '1024', '-i', this.pipeName!)
     } else if (this.useDdagrab) {
       args.push('-init_hw_device', 'd3d11va')
       args.push(
@@ -430,7 +428,7 @@ export class Recorder extends EventEmitter {
 
     this.pipeName = `\\\\.\\pipe\\clipbait-capture-${process.pid}-${Date.now()}`
     const server = createServer((socket) => {
-      this.nativeProc?.stdout?.pipe(socket)
+      this.nativeProc?.stdout?.pipe(new H264ToFlv()).pipe(socket)
     })
     // A pipe error surfaces as ffmpeg failing to open its video input, which
     // that process's own close handler already reports.
