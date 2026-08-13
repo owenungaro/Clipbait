@@ -60,8 +60,9 @@ export function HotkeysPane(): React.JSX.Element | null {
       </Section>
 
       <p className="field__help">
-        Function keys work on their own. Anything else needs at least one modifier, otherwise it
-        would swallow that key in every other program.
+        Any key works, on its own or with modifiers. A key bound by itself is captured system-wide
+        while Clipbait is running, so it won't reach other programs — pick something you don't need
+        elsewhere, or add Ctrl, Alt or Shift to keep it free.
       </p>
     </div>
   )
