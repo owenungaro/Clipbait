@@ -30,9 +30,8 @@
 // all; anything else on stderr is a human-readable error. Compressed H.264
 // goes to stdout, and nothing else ever does.
 
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-
+// WIN32_LEAN_AND_MEAN / NOMINMAX / UNICODE are set via CMakeLists.txt so
+// they apply uniformly with no risk of a redefinition warning here.
 #include <windows.h>
 #include <wrl/client.h>
 #include <wrl/wrappers/corewrappers.h>
@@ -55,6 +54,7 @@
 #include <mftransform.h>
 #include <mferror.h>
 #include <codecapi.h>
+#include <icodecapi.h>
 
 #include <fcntl.h>
 #include <io.h>
@@ -217,7 +217,9 @@ struct CaptureSession {
 CaptureSession StartCapture(const D3DContext& d3d, HMONITOR monitor, bool cursor) {
   CaptureSession cap;
 
-  ComPtr<WGC::IGraphicsCaptureItemInterop> interop;
+  // The interop interface is a hand-written COM bridge, not part of the WinRT
+  // metadata, so it lives at global scope rather than under ABI::Windows::*.
+  ComPtr<::IGraphicsCaptureItemInterop> interop;
   CHECK_HR(RoGetActivationFactory(HStringReference(RuntimeClass_Windows_Graphics_Capture_GraphicsCaptureItem).Get(),
                                    IID_PPV_ARGS(&interop)),
            "activate GraphicsCaptureItem factory");
@@ -458,7 +460,8 @@ int main(int argc, char** argv) {
 
   if (opts.probe) {
     // Prove the whole pipeline stands up without actually running capture.
-    cap.session->Close();
+    // No explicit teardown: the process exits immediately below and the OS
+    // reclaims the session, same as every other exit path in this program.
     fprintf(stderr, "READY\n");
     fflush(stderr);
     return 0;
