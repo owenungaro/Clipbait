@@ -131,6 +131,17 @@ export class Recorder extends EventEmitter {
   private pipeServer: Server | null = null
   private pipeName: string | null = null
   private startedAt = 0
+  /**
+   * A single reference point both video and audio measure elapsed time
+   * from, set once at the top of arm(). Without this, native capture's FLV
+   * clock (starting the moment the pipe connects) and audio's clock
+   * (starting whenever the WebAudio graph — window, worklet, media stream
+   * negotiation — finishes initializing, which can lag by hundreds of ms)
+   * each picked their own zero point, and ffmpeg's aresample=async filter
+   * had to continuously stretch audio to paper over the gap — audible as
+   * distorted, not missing, sound.
+   */
+  private captureStartedAt = 0
   private settings: Settings
   private display: DisplayInfo | null = null
   private encoder: EncoderInfo | null = null
@@ -240,7 +251,10 @@ export class Recorder extends EventEmitter {
   private startSilenceWatchdog(): void {
     this.stopSilenceWatchdog()
     if (!this.wantsAudio()) return
-    this.lastAudioAt = Date.now()
+    // Anchored to the shared reference, not "now" — real audio typically
+    // has not started flowing yet at this point, and the watchdog's normal
+    // gap-filling (below) is what pads that startup lag with silence.
+    this.lastAudioAt = this.captureStartedAt
     this.silenceTimer = setInterval(() => {
       const stdin = this.proc?.stdin
       if (!stdin || stdin.destroyed || !stdin.writable) return
@@ -285,6 +299,7 @@ export class Recorder extends EventEmitter {
         this.settings.capture.resolution === 'native' &&
         (await supportsNativeCapture(this.display.captureIndex))
 
+      this.captureStartedAt = Date.now()
       await this.spawnFfmpeg()
       startForegroundTracking()
       this.startPolling()
@@ -386,14 +401,8 @@ export class Recorder extends EventEmitter {
       // turn into enormous allocations.
       args.push('-af', 'aresample=async=1:first_pts=0')
       // Hard ceiling on how long the muxer will hold one stream waiting for
-      // the other, so an audio fault can never balloon memory again. Native
-      // capture's video timing is wall-clock-derived (see the -i above) but
-      // still less precise than the other paths' own internal clock under
-      // heavy GPU contention — occasional bursts of a few frames landing in
-      // one read make video's timestamps briefly lag behind audio's. 500ms
-      // was tight enough for that lag alone to get audio dropped outright;
-      // give native capture more slack to ride out a burst instead.
-      args.push('-max_interleave_delta', this.useNativeCapture ? '3000000' : '500000')
+      // the other, so an audio fault can never balloon memory again.
+      args.push('-max_interleave_delta', '500000')
     }
 
     // Video is already encoded on the native-capture path; only audio needs
@@ -428,7 +437,7 @@ export class Recorder extends EventEmitter {
 
     this.pipeName = `\\\\.\\pipe\\clipbait-capture-${process.pid}-${Date.now()}`
     const server = createServer((socket) => {
-      this.nativeProc?.stdout?.pipe(new H264ToFlv()).pipe(socket)
+      this.nativeProc?.stdout?.pipe(new H264ToFlv(this.captureStartedAt)).pipe(socket)
     })
     // A pipe error surfaces as ffmpeg failing to open its video input, which
     // that process's own close handler already reports.

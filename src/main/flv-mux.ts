@@ -102,7 +102,21 @@ export class H264ToFlv extends Transform {
   private sentHeader = false
   private sentSequenceHeader = false
   private lastTimestampMs = -1
-  private readonly startedAt = Date.now()
+  private readonly startedAt: number
+
+  /**
+   * `referenceStart` should be the same moment the audio pipeline measures
+   * its own silence-padding from (see recorder.ts's captureStartedAt) — not
+   * just "when this transform happened to be constructed". Video and audio
+   * initialize on very different paths (a named pipe connecting vs. a
+   * WebAudio graph spinning up), and if each timestamps itself from its own
+   * start, ffmpeg's aresample=async filter has to continuously stretch
+   * audio to correct the gap between them, which is audible as distortion.
+   */
+  constructor(referenceStart: number = Date.now()) {
+    super()
+    this.startedAt = referenceStart
+  }
 
   _transform(chunk: Buffer, _enc: BufferEncoding, callback: TransformCallback): void {
     this.carry = this.carry.length ? Buffer.concat([this.carry, chunk]) : chunk
