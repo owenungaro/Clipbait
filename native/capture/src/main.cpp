@@ -530,7 +530,11 @@ int main(int argc, char** argv) {
 
   ComPtr<ID3D11Texture2D> lastTexture;
   LONGLONG frameIndex = 0;
-  bool encoderWantsInput = true;
+  // A count, not a bool: a pipelined hardware encoder can raise more than one
+  // METransformNeedInput before we spend a credit (input queue depth > 1). A
+  // bool here silently discards every credit past the first, which halved
+  // the effective feed rate in testing.
+  int encoderInputCredits = 0;
 
   // Rate-limited diagnostics: a silent stall here is otherwise invisible,
   // since a failed ProcessInput/ProcessOutput just drops the frame.
@@ -548,7 +552,7 @@ int main(int argc, char** argv) {
       if (FAILED(hr) || !event) break;
       MediaEventType type = MEUnknown;
       event->GetType(&type);
-      if (type == METransformNeedInput) encoderWantsInput = true;
+      if (type == METransformNeedInput) encoderInputCredits++;
       else if (type == METransformHaveOutput) PullEncoderOutput(encoder);
     }
 
@@ -613,10 +617,10 @@ int main(int argc, char** argv) {
 
       if (FAILED(lastVpOutHr) || !resultSample) {
         if (FAILED(lastVpOutHr)) vpOutFail++;
-      } else if (encoderWantsInput) {
+      } else if (encoderInputCredits > 0) {
         lastEncInHr = encoder.mft->ProcessInput(0, resultSample.Get(), 0);
         if (SUCCEEDED(lastEncInHr)) {
-          encoderWantsInput = false;
+          encoderInputCredits--;
           encInSent++;
         }
       } else {
