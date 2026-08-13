@@ -254,6 +254,13 @@ CaptureSession StartCapture(const D3DContext& d3d, HMONITOR monitor, bool cursor
   ComPtr<WGC::IGraphicsCaptureSession2> session2;
   if (SUCCEEDED(cap.session.As(&session2))) session2->put_IsCursorCaptureEnabled(cursor);
 
+  // Best-effort: ask Windows not to draw its yellow "this is being
+  // captured" border. Some Windows versions force it on regardless for a
+  // full-monitor capture (as opposed to a single window) as a privacy
+  // measure the caller cannot override — if so, this quietly does nothing.
+  ComPtr<WGC::IGraphicsCaptureSession3> session3;
+  if (SUCCEEDED(cap.session.As(&session3))) session3->put_IsBorderRequired(FALSE);
+
   CHECK_HR(cap.session->StartCapture(), "StartCapture");
   return cap;
 }

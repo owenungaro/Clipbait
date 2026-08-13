@@ -319,7 +319,22 @@ export class Recorder extends EventEmitter {
     if (this.useNativeCapture) {
       // Already-encoded H.264 arrives over a named pipe from
       // clipbait-capture.exe; ffmpeg's job for video is muxing only.
-      args.push('-f', 'h264', '-thread_queue_size', '1024', '-i', this.pipeName!)
+      //
+      // Raw H.264 carries no real per-frame timestamps, so without
+      // use_wallclock_as_timestamps ffmpeg falls back to a constant nominal
+      // rate for every packet. Under real GPU contention the encoder's
+      // actual throughput drops well below that nominal rate, and stamping
+      // every arriving frame as if it came in on time made played-back
+      // video run in slow motion, ballooned segment/file sizes, and let
+      // audio's (correctly wall-clock-paced) timestamps race so far ahead
+      // of video's artificially slow one that max_interleave_delta below
+      // dropped it outright.
+      args.push(
+        '-f', 'h264',
+        '-use_wallclock_as_timestamps', '1',
+        '-thread_queue_size', '1024',
+        '-i', this.pipeName!
+      )
     } else if (this.useDdagrab) {
       args.push('-init_hw_device', 'd3d11va')
       args.push(
