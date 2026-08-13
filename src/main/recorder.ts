@@ -388,8 +388,14 @@ export class Recorder extends EventEmitter {
       // turn into enormous allocations.
       args.push('-af', 'aresample=async=1:first_pts=0')
       // Hard ceiling on how long the muxer will hold one stream waiting for
-      // the other, so an audio fault can never balloon memory again.
-      args.push('-max_interleave_delta', '500000')
+      // the other, so an audio fault can never balloon memory again. Native
+      // capture's video timing is wall-clock-derived (see the -i above) but
+      // still less precise than the other paths' own internal clock under
+      // heavy GPU contention — occasional bursts of a few frames landing in
+      // one read make video's timestamps briefly lag behind audio's. 500ms
+      // was tight enough for that lag alone to get audio dropped outright;
+      // give native capture more slack to ride out a burst instead.
+      args.push('-max_interleave_delta', this.useNativeCapture ? '3000000' : '500000')
     }
 
     // Video is already encoded on the native-capture path; only audio needs
