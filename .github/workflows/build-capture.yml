@@ -1,0 +1,42 @@
+name: build-capture
+
+# Compiles native/capture — the WGC + Media Foundation screen capture helper.
+# It needs C++/WinRT-flavoured COM (raw ABI headers + WRL) and Media
+# Foundation, which only build with real MSVC and the Windows SDK. There is
+# no way to produce this binary from the Linux/WSL box the rest of the app
+# is built on, so this workflow is the only place clipbait-capture.exe comes
+# from. windows-latest ships full Visual Studio 2022, so CMake's VS
+# generator finds the toolchain with no extra setup step.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "native/capture/**"
+      - ".github/workflows/build-capture.yml"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Sets up cl.exe/link.exe and the Windows SDK in PATH/INCLUDE/LIB
+      # directly, so the build does not depend on CMake locating a Visual
+      # Studio instance on its own.
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Configure
+        run: cmake -S native/capture -B native/capture/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build native/capture/build --verbose
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: clipbait-capture
+          path: native/capture/build/bin/clipbait-capture.exe
+          if-no-files-found: error

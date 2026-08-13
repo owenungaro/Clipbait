@@ -1,12 +1,18 @@
 import { EventEmitter } from 'node:events'
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import {
+  spawn,
+  type ChildProcess,
+  type ChildProcessWithoutNullStreams
+} from 'node:child_process'
 import { promises as fs } from 'node:fs'
+import { createServer, type Server } from 'node:net'
 import path from 'node:path'
 import type { DisplayInfo, EncoderInfo, EngineState, EngineStatus, Settings } from '@shared/types'
 import { segmentDir } from './config'
 import { ffmpegPath, selectEncoder, supportsDdagrab } from './ffmpeg'
 import { resolveDisplay } from './displays'
 import { foregroundApp, startForegroundTracking, stopForegroundTracking } from './foreground'
+import { captureExePath, supportsNativeCapture } from './capture-native'
 
 /** Each ring slot is this long. Short enough to keep clip edges tight, long
  *  enough that we are not churning thousands of files an hour. */
@@ -43,6 +49,17 @@ function targetSize(display: DisplayInfo, choice: string): { w: number; h: numbe
   if (cap === null || display.height <= cap) return null
   const scale = cap / display.height
   return { w: even(Math.round(display.width * scale)), h: even(cap) }
+}
+
+/**
+ * clipbait-capture.exe only takes a target bitrate — there is no QP/CQP knob
+ * to translate 'quality' mode onto yet. Approximate a generous bitrate from
+ * resolution and frame rate instead, tuned to look roughly comparable to the
+ * ddagrab CQP path's default quality rather than to be exact.
+ */
+function approximateBitrateKbps(width: number, height: number, fps: number): number {
+  const kbps = Math.round((width * height * fps * 0.09) / 1000)
+  return Math.min(120_000, Math.max(8_000, kbps))
 }
 
 function encoderArgs(enc: EncoderInfo, s: Settings, fps: number): string[] {
@@ -107,6 +124,11 @@ export class Recorder extends EventEmitter {
   private errorText: string | null = null
   private stderrTail: string[] = []
   private useDdagrab = true
+  /** GPU capture via clipbait-capture.exe, when this machine can do it. */
+  private useNativeCapture = false
+  private nativeProc: ChildProcess | null = null
+  private pipeServer: Server | null = null
+  private pipeName: string | null = null
   private startedAt = 0
   private settings: Settings
   private display: DisplayInfo | null = null
@@ -256,6 +278,11 @@ export class Recorder extends EventEmitter {
       this.display = resolveDisplay(this.settings.capture.displayId)
       this.encoder = await selectEncoder(this.settings.capture.encoder)
       this.useDdagrab = await supportsDdagrab()
+      // Scoped to native resolution: WGC's own scaling would need a second
+      // GPU pass on the capture side, and the common case doesn't need it.
+      this.useNativeCapture =
+        this.settings.capture.resolution === 'native' &&
+        (await supportsNativeCapture(this.display.captureIndex))
 
       await this.spawnFfmpeg()
       startForegroundTracking()
@@ -289,7 +316,11 @@ export class Recorder extends EventEmitter {
     ]
     if (!wantAudio) args.push('-nostdin')
 
-    if (this.useDdagrab) {
+    if (this.useNativeCapture) {
+      // Already-encoded H.264 arrives over a named pipe from
+      // clipbait-capture.exe; ffmpeg's job for video is muxing only.
+      args.push('-f', 'h264', '-thread_queue_size', '1024', '-i', this.pipeName!)
+    } else if (this.useDdagrab) {
       args.push('-init_hw_device', 'd3d11va')
       args.push(
         '-filter_complex',
@@ -325,9 +356,16 @@ export class Recorder extends EventEmitter {
       )
     }
 
-    args.push('-map', '[v]')
+    if (this.useNativeCapture) {
+      // No filter graph in this branch — the pipe is a real, numbered input.
+      args.push('-map', '0:v', '-c:v', 'copy')
+    } else {
+      args.push('-map', '[v]')
+    }
     if (wantAudio) {
-      const audioIndex = this.useDdagrab ? 0 : 1
+      // Native capture's pipe occupies input 0, pushing audio to 1; the
+      // filter-graph paths have no such input and keep their own numbering.
+      const audioIndex = this.useNativeCapture ? 1 : this.useDdagrab ? 0 : 1
       args.push('-map', `${audioIndex}:a`)
       args.push('-c:a', 'aac', '-b:a', '192k', '-ar', String(AUDIO_SAMPLE_RATE))
       // Gentle drift correction only. A large async window would try to fill
@@ -339,7 +377,11 @@ export class Recorder extends EventEmitter {
       args.push('-max_interleave_delta', '500000')
     }
 
-    args.push(...encoderArgs(this.encoder!, s, fps))
+    // Video is already encoded on the native-capture path; only audio needs
+    // an encoder there, already added above.
+    if (!this.useNativeCapture) {
+      args.push(...encoderArgs(this.encoder!, s, fps))
+    }
 
     args.push(
       '-f', 'segment',
@@ -352,8 +394,96 @@ export class Recorder extends EventEmitter {
     return args
   }
 
+  /**
+   * Sets up the named pipe clipbait-capture.exe's stdout is relayed through
+   * and spawns it. Must run before buildArgs() (which reads this.pipeName)
+   * and before ffmpeg is spawned, so the pipe is already listening when
+   * ffmpeg connects to it as a client.
+   */
+  private startNativeCapture(): void {
+    const exe = captureExePath()
+    if (!exe) {
+      this.useNativeCapture = false
+      return
+    }
+
+    this.pipeName = `\\\\.\\pipe\\clipbait-capture-${process.pid}-${Date.now()}`
+    const server = createServer((socket) => {
+      this.nativeProc?.stdout?.pipe(socket)
+    })
+    // A pipe error surfaces as ffmpeg failing to open its video input, which
+    // that process's own close handler already reports.
+    server.on('error', () => {})
+    server.listen(this.pipeName)
+    this.pipeServer = server
+
+    const s = this.settings
+    const display = this.display!
+    const bitrateKbps =
+      s.capture.rateControl === 'bitrate'
+        ? Math.round(s.capture.bitrateMbps * 1000)
+        : approximateBitrateKbps(display.width, display.height, s.capture.fps)
+
+    const child = spawn(
+      exe,
+      [
+        '--monitor', String(display.captureIndex),
+        '--fps', String(s.capture.fps),
+        '--bitrate', String(bitrateKbps),
+        '--cursor', s.capture.captureCursor ? '1' : '0'
+      ],
+      { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }
+    )
+    this.nativeProc = child
+
+    child.stderr.setEncoding('utf8')
+    child.stderr.on('data', (text: string) => {
+      for (const line of text.split(/\r?\n/)) {
+        if (!line.trim()) continue
+        this.stderrTail.push(`[capture] ${line}`)
+        if (this.stderrTail.length > 40) this.stderrTail.shift()
+      }
+    })
+
+    child.on('error', () => this.handleNativeCaptureFailure())
+    child.on('close', (code) => {
+      if (this.nativeProc !== child) return  // already superseded
+      this.nativeProc = null
+      if (this.useNativeCapture && code !== 0) this.handleNativeCaptureFailure()
+    })
+  }
+
+  /**
+   * clipbait-capture.exe died, or never started. Same shape as the
+   * ddagrab->gdigrab downgrade below: drop native capture for the rest of
+   * this armed session and rebuild the pipeline without it, rather than
+   * surfacing a hard error the user can do nothing about.
+   */
+  private handleNativeCaptureFailure(): void {
+    if (!this.useNativeCapture || this.restarting) return
+    this.useNativeCapture = false
+    this.stopNativeCapture()
+    const proc = this.proc
+    this.proc = null
+    proc?.kill('SIGKILL')
+    this.restartQuietly()
+  }
+
+  private stopNativeCapture(): void {
+    if (this.nativeProc) {
+      this.nativeProc.kill('SIGKILL')
+      this.nativeProc = null
+    }
+    if (this.pipeServer) {
+      this.pipeServer.close()
+      this.pipeServer = null
+    }
+    this.pipeName = null
+  }
+
   private async spawnFfmpeg(): Promise<void> {
     const bin = ffmpegPath()
+    if (this.useNativeCapture) this.startNativeCapture()
     const args = this.buildArgs()
     this.startedAt = Date.now()
 
@@ -389,11 +519,18 @@ export class Recorder extends EventEmitter {
     child.on('close', (code) => {
       const wasArmed = this.state === 'armed' || this.state === 'preparing'
       this.proc = null
+      this.stopNativeCapture()
       if (this.restarting) return
       if (wasArmed && code !== 0) {
         const ranBriefly = Date.now() - this.startedAt < 4_000
-        // A fast failure on the Desktop Duplication path usually means the
-        // session cannot use it at all; drop to GDI once and keep going.
+        // A fast failure usually means this session cannot use whichever
+        // capture path was active at all; drop down a tier and keep going:
+        // native GPU capture -> Desktop Duplication -> GDI.
+        if (ranBriefly && this.useNativeCapture) {
+          this.useNativeCapture = false
+          this.restartQuietly()
+          return
+        }
         if (ranBriefly && this.useDdagrab) {
           this.useDdagrab = false
           this.restartQuietly()
@@ -548,6 +685,7 @@ export class Recorder extends EventEmitter {
     if (!this.proc) {
       this.stopPolling()
       stopForegroundTracking()
+      this.stopNativeCapture()
       this.setState('idle')
       return
     }

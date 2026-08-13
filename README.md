@@ -36,7 +36,7 @@ All rebindable under **Setup > Keys**. Function keys work on their own, anything
 
 Everything lives behind the **Setup** button.
 
-**Capture.** Pick your monitor (each tile shows a live frame so you can tell which one is which), frame rate, resolution, and encoder. Auto grabs the fastest hardware encoder you've got, so NVENC on Nvidia, Quick Sync on Intel, AMF on AMD. Buffer length is how far back a clip reaches.
+**Capture.** Pick your monitor (each tile shows a live frame so you can tell which one is which), frame rate, resolution, and encoder. Auto grabs the fastest hardware encoder you've got, so NVENC on Nvidia, Quick Sync on Intel, AMF on AMD. Buffer length is how far back a clip reaches. At native resolution, Clipbait captures through Windows Graphics Capture straight into your GPU's hardware encoder — nothing round-trips through system memory — which is what keeps a game's own framerate from taking a hit while armed. That falls back automatically to the older capture method on anything that can't do it.
 
 **Audio.** Desktop sound and mic, mixed into one track, both with level sliders.
 
@@ -65,6 +65,14 @@ npm run dist    # build the installer into release/
 ```
 
 Needs Node 20 or newer.
+
+The GPU capture path (`native/capture/`) is a separate native helper, `clipbait-capture.exe`, that needs real MSVC and the Windows SDK — nothing available in this repo's normal WSL/Linux build. It's built by the `build-capture` GitHub Actions workflow and checked into `resources/capture/`, so a normal `npm run dist` just picks up whatever's there. If you change anything under `native/capture/`, push it, wait for that workflow to finish, then:
+
+```bash
+gh run download <run-id> --repo owenungaro/Clipbait -n clipbait-capture -D resources/capture
+```
+
+and commit the updated exe. Nothing else in the build needs to change — it's picked up the same way `tray.png` and the other files under `resources/` are.
 
 ## Cutting a release
 
