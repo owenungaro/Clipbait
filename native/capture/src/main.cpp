@@ -367,10 +367,11 @@ Encoder CreateEncoder(const D3DContext& d3d, int width, int height, int fps, int
   CoTaskMemFree(activates);
   if (FAILED(activateHr)) Fail("ActivateObject on hardware H.264 encoder", activateHr);
 
-  CHECK_HR(enc.mft->ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER,
-                                    reinterpret_cast<ULONG_PTR>(d3d.mfDeviceManager.Get())),
-           "encoder SET_D3D_MANAGER");
-
+  // Must happen before any other interaction with the MFT. An async MFT
+  // refuses everything — including ProcessMessage — until the caller has
+  // declared it knows how to drive the async model, which is exactly what
+  // MF_E_UNSUPPORTED_D3D_TYPE ("the caller does not appear to support this
+  // transform's asynchronous capabilities") turned out to mean here.
   ComPtr<IMFAttributes> attrs;
   if (SUCCEEDED(enc.mft->GetAttributes(&attrs))) {
     UINT32 isAsync = 0;
@@ -378,6 +379,10 @@ Encoder CreateEncoder(const D3DContext& d3d, int width, int height, int fps, int
     if (isAsync) attrs->SetUINT32(MF_TRANSFORM_ASYNC_UNLOCK, TRUE);
   }
   CHECK_HR(enc.mft.As(&enc.events), "QI IMFMediaEventGenerator");
+
+  CHECK_HR(enc.mft->ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER,
+                                    reinterpret_cast<ULONG_PTR>(d3d.mfDeviceManager.Get())),
+           "encoder SET_D3D_MANAGER");
 
   ComPtr<IMFMediaType> outType;
   CHECK_HR(MFCreateMediaType(&outType), "MFCreateMediaType (enc out)");
