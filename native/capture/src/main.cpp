@@ -299,8 +299,19 @@ ComPtr<IMFSample> WrapTexture(ID3D11Texture2D* texture, LONGLONG time, LONGLONG 
   return sample;
 }
 
-ComPtr<IMFTransform> CreateColorConverter(const D3DContext& d3d, int width, int height) {
+struct ColorConverter {
   ComPtr<IMFTransform> mft;
+  // D3D11-aware MFTs commonly allocate their own output textures from a pool
+  // tied to the device rather than accept a caller-provided one; forcing our
+  // own sample on one that expects to allocate its own fails ProcessOutput
+  // with E_INVALIDARG (which then wedges ProcessInput with MF_E_NOTACCEPTING
+  // forever, since the accepted input is never drained).
+  bool outputProvidesSamples = false;
+};
+
+ColorConverter CreateColorConverter(const D3DContext& d3d, int width, int height) {
+  ColorConverter conv;
+  ComPtr<IMFTransform>& mft = conv.mft;
   CHECK_HR(CoCreateInstance(CLSID_VideoProcessorMFT, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&mft)),
            "CoCreateInstance CLSID_VideoProcessorMFT");
   CHECK_HR(mft->ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER,
@@ -323,12 +334,18 @@ ComPtr<IMFTransform> CreateColorConverter(const D3DContext& d3d, int width, int 
   outType->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
   CHECK_HR(mft->SetOutputType(0, outType.Get(), 0), "vp SetOutputType");
 
+  MFT_OUTPUT_STREAM_INFO streamInfo = {};
+  if (SUCCEEDED(mft->GetOutputStreamInfo(0, &streamInfo))) {
+    conv.outputProvidesSamples =
+        (streamInfo.dwFlags & (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES | MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES)) != 0;
+  }
+
   // Without these the converter silently rejects every ProcessInput call —
   // a synchronous MFT still needs to be told streaming has begun.
   mft->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
   mft->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
 
-  return mft;
+  return conv;
 }
 
 struct Encoder {
@@ -492,7 +509,7 @@ int main(int argc, char** argv) {
   HMONITOR monitor = PickMonitor(opts.monitorIndex);
   CaptureSession cap = StartCapture(d3d, monitor, opts.cursor);
 
-  ComPtr<IMFTransform> colorConverter = CreateColorConverter(d3d, cap.width, cap.height);
+  ColorConverter colorConverter = CreateColorConverter(d3d, cap.width, cap.height);
   Encoder encoder = CreateEncoder(d3d, cap.width, cap.height, opts.fps, opts.bitrateKbps);
 
   if (opts.probe) {
@@ -557,30 +574,47 @@ int main(int argc, char** argv) {
     framesCaptured++;
 
     ComPtr<IMFSample> vpIn = WrapTexture(texture.Get(), time, frameDuration);
-    lastVpInHr = colorConverter->ProcessInput(0, vpIn.Get(), 0);
-    if (FAILED(lastVpInHr)) vpInFail++;
+    lastVpInHr = colorConverter.mft->ProcessInput(0, vpIn.Get(), 0);
+    if (FAILED(lastVpInHr)) {
+      vpInFail++;
+    } else {
+      // Only allocate our own output texture when the converter actually
+      // wants one from us; otherwise it hands back a sample wrapping a
+      // texture from its own device-bound pool.
+      ComPtr<ID3D11Texture2D> ownNv12;
+      ComPtr<IMFSample> vpOut;
+      if (!colorConverter.outputProvidesSamples) {
+        D3D11_TEXTURE2D_DESC desc = {};
+        desc.Width = static_cast<UINT>(cap.width);
+        desc.Height = static_cast<UINT>(cap.height);
+        desc.MipLevels = 1;
+        desc.ArraySize = 1;
+        desc.Format = DXGI_FORMAT_NV12;
+        desc.SampleDesc.Count = 1;
+        desc.Usage = D3D11_USAGE_DEFAULT;
+        desc.BindFlags = D3D11_BIND_RENDER_TARGET;
+        if (SUCCEEDED(d3d.device->CreateTexture2D(&desc, nullptr, &ownNv12))) {
+          vpOut = WrapTexture(ownNv12.Get(), time, frameDuration);
+        }
+      }
 
-    ComPtr<ID3D11Texture2D> nv12;
-    D3D11_TEXTURE2D_DESC desc = {};
-    desc.Width = static_cast<UINT>(cap.width);
-    desc.Height = static_cast<UINT>(cap.height);
-    desc.MipLevels = 1;
-    desc.ArraySize = 1;
-    desc.Format = DXGI_FORMAT_NV12;
-    desc.SampleDesc.Count = 1;
-    desc.Usage = D3D11_USAGE_DEFAULT;
-    desc.BindFlags = D3D11_BIND_RENDER_TARGET;
-    if (SUCCEEDED(d3d.device->CreateTexture2D(&desc, nullptr, &nv12))) {
-      ComPtr<IMFSample> vpOut = WrapTexture(nv12.Get(), time, frameDuration);
       MFT_OUTPUT_DATA_BUFFER vpOutBuf = {};
       vpOutBuf.dwStreamID = 0;
-      vpOutBuf.pSample = vpOut.Get();
+      vpOutBuf.pSample = vpOut.Get();  // null when the converter provides its own
       DWORD vpStatus = 0;
-      lastVpOutHr = colorConverter->ProcessOutput(0, 1, &vpOutBuf, &vpStatus);
-      if (FAILED(lastVpOutHr)) {
-        vpOutFail++;
+      lastVpOutHr = colorConverter.mft->ProcessOutput(0, 1, &vpOutBuf, &vpStatus);
+
+      ComPtr<IMFSample> resultSample;
+      if (vpOutBuf.pSample) {
+        resultSample.Attach(vpOutBuf.pSample);  // transfers the MFT's ref, no extra AddRef
+      } else {
+        resultSample = vpOut;
+      }
+
+      if (FAILED(lastVpOutHr) || !resultSample) {
+        if (FAILED(lastVpOutHr)) vpOutFail++;
       } else if (encoderWantsInput) {
-        lastEncInHr = encoder.mft->ProcessInput(0, vpOut.Get(), 0);
+        lastEncInHr = encoder.mft->ProcessInput(0, resultSample.Get(), 0);
         if (SUCCEEDED(lastEncInHr)) {
           encoderWantsInput = false;
           encInSent++;
