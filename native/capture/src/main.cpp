@@ -323,6 +323,11 @@ ComPtr<IMFTransform> CreateColorConverter(const D3DContext& d3d, int width, int 
   outType->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
   CHECK_HR(mft->SetOutputType(0, outType.Get(), 0), "vp SetOutputType");
 
+  // Without these the converter silently rejects every ProcessInput call —
+  // a synchronous MFT still needs to be told streaming has begun.
+  mft->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
+  mft->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
+
   return mft;
 }
 
@@ -510,6 +515,12 @@ int main(int argc, char** argv) {
   LONGLONG frameIndex = 0;
   bool encoderWantsInput = true;
 
+  // Rate-limited diagnostics: a silent stall here is otherwise invisible,
+  // since a failed ProcessInput/ProcessOutput just drops the frame.
+  UINT64 framesCaptured = 0, vpInFail = 0, vpOutFail = 0, encInSent = 0, encInSkippedBackpressure = 0;
+  HRESULT lastVpInHr = S_OK, lastVpOutHr = S_OK, lastEncInHr = S_OK;
+  auto lastReport = std::chrono::steady_clock::now();
+
   for (;;) {
     // Drain any encoder events that arrived since the last spin without
     // blocking — a hardware encoder MFT is an async object and only accepts
@@ -543,9 +554,11 @@ int main(int argc, char** argv) {
 
     LONGLONG time = frameIndex * frameDuration;
     frameIndex++;
+    framesCaptured++;
 
     ComPtr<IMFSample> vpIn = WrapTexture(texture.Get(), time, frameDuration);
-    colorConverter->ProcessInput(0, vpIn.Get(), 0);
+    lastVpInHr = colorConverter->ProcessInput(0, vpIn.Get(), 0);
+    if (FAILED(lastVpInHr)) vpInFail++;
 
     ComPtr<ID3D11Texture2D> nv12;
     D3D11_TEXTURE2D_DESC desc = {};
@@ -557,22 +570,42 @@ int main(int argc, char** argv) {
     desc.SampleDesc.Count = 1;
     desc.Usage = D3D11_USAGE_DEFAULT;
     desc.BindFlags = D3D11_BIND_RENDER_TARGET;
-    if (FAILED(d3d.device->CreateTexture2D(&desc, nullptr, &nv12))) continue;
-
-    ComPtr<IMFSample> vpOut = WrapTexture(nv12.Get(), time, frameDuration);
-    MFT_OUTPUT_DATA_BUFFER vpOutBuf = {};
-    vpOutBuf.dwStreamID = 0;
-    vpOutBuf.pSample = vpOut.Get();
-    DWORD vpStatus = 0;
-    if (FAILED(colorConverter->ProcessOutput(0, 1, &vpOutBuf, &vpStatus))) continue;
-
-    if (encoderWantsInput) {
-      if (SUCCEEDED(encoder.mft->ProcessInput(0, vpOut.Get(), 0))) encoderWantsInput = false;
+    if (SUCCEEDED(d3d.device->CreateTexture2D(&desc, nullptr, &nv12))) {
+      ComPtr<IMFSample> vpOut = WrapTexture(nv12.Get(), time, frameDuration);
+      MFT_OUTPUT_DATA_BUFFER vpOutBuf = {};
+      vpOutBuf.dwStreamID = 0;
+      vpOutBuf.pSample = vpOut.Get();
+      DWORD vpStatus = 0;
+      lastVpOutHr = colorConverter->ProcessOutput(0, 1, &vpOutBuf, &vpStatus);
+      if (FAILED(lastVpOutHr)) {
+        vpOutFail++;
+      } else if (encoderWantsInput) {
+        lastEncInHr = encoder.mft->ProcessInput(0, vpOut.Get(), 0);
+        if (SUCCEEDED(lastEncInHr)) {
+          encoderWantsInput = false;
+          encInSent++;
+        }
+      } else {
+        encInSkippedBackpressure++;
+      }
     }
 
     if (frame) {
       ComPtr<ABI::Windows::Foundation::IClosable> closable;
       if (SUCCEEDED(frame.As(&closable))) closable->Close();
+    }
+
+    auto now = std::chrono::steady_clock::now();
+    if (now - lastReport > std::chrono::seconds(1)) {
+      fprintf(stderr,
+              "stats: captured=%llu vpInFail=%llu(0x%08lx) vpOutFail=%llu(0x%08lx) "
+              "encSent=%llu encSkipped=%llu lastEncInHr=0x%08lx\n",
+              static_cast<unsigned long long>(framesCaptured), static_cast<unsigned long long>(vpInFail),
+              static_cast<unsigned long>(lastVpInHr), static_cast<unsigned long long>(vpOutFail),
+              static_cast<unsigned long>(lastVpOutHr), static_cast<unsigned long long>(encInSent),
+              static_cast<unsigned long long>(encInSkippedBackpressure), static_cast<unsigned long>(lastEncInHr));
+      fflush(stderr);
+      lastReport = now;
     }
   }
 }
